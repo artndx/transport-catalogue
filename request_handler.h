@@ -2,7 +2,10 @@
 
 #include <variant>
 #include <sstream>
+#include <map>
 #include "transport_catalogue.h"
+#include "map_renderer.h"
+#include "transport_router.h"
 
 namespace transport_catalogue{
 
@@ -13,11 +16,11 @@ namespace detail{
 using Distances = std::unordered_map<std::string, int>;
 using Stops = std::vector<std::string>;
 using Buses = std::set<std::string>;
-
+using BusLocation = std::vector<std::pair<double, double>>;
 
 //Requests
-struct RequestStop {
-    RequestStop(std::string type, std::string name,
+struct RequestAddStop {
+    RequestAddStop(std::string type, std::string name,
                 double latitude, double longtitude, Distances road_distances)
                 : type_(type), name_(name),
                 latitude_(latitude), longtitude_(longtitude), road_distances_(road_distances){}
@@ -28,8 +31,8 @@ struct RequestStop {
     Distances road_distances_;
 };
 
-struct RequestBus{
-    RequestBus(std::string type, std::string name,
+struct RequestAddBus{
+    RequestAddBus(std::string type, std::string name,
                 Stops stops, bool is_roundtrip)
                 : type_(type), name_(name), stops_(stops), is_roundtrip_(is_roundtrip){}
     std::string type_;
@@ -38,12 +41,78 @@ struct RequestBus{
     bool is_roundtrip_ = false;
 };
 
-struct RequestInfo{
-    RequestInfo(std::string type, std::string name, int id)
+class MultiBaseRequest : private std::variant<RequestAddStop, RequestAddBus>{
+public:
+    using variant::variant;
+
+    bool IsRequestAddStop(){
+        return std::holds_alternative<RequestAddStop>(*this);
+    }
+
+    RequestAddStop AsRequestAddStop(){
+        return std::get<RequestAddStop>(*this);
+    }
+
+    bool IsRequestAddBus(){
+        return std::holds_alternative<RequestAddBus>(*this);
+    }
+
+    RequestAddBus AsRequestAddBus(){
+        return std::get<RequestAddBus>(*this);
+    }
+};
+
+struct RequestGetInfo{
+    RequestGetInfo(std::string type, std::string name, int id)
     : type_(type), name_(name), id_(id){}
     std::string type_;
     std::string name_;
     int id_ = 0;
+};
+
+struct RequestGetMap{
+    RequestGetMap(int id)
+    : id_(id){}
+    int id_ = 0;
+};
+
+struct RequestGetRoute{
+    RequestGetRoute(std::string from, std::string to, int id)
+    :from_(from), to_(to), id_(id){}
+
+    std::string from_;
+    std::string to_;
+    int id_ = 0;
+
+};
+
+class MultiStatRequest : private std::variant<RequestGetInfo, RequestGetMap, RequestGetRoute>{
+public:
+    using variant::variant;
+
+    bool IsRequestGetInfo(){
+        return std::holds_alternative<RequestGetInfo>(*this);
+    }
+
+    RequestGetInfo AsRequestGetInfo(){
+        return std::get<RequestGetInfo>(*this);
+    }
+
+    bool IsRequestGetMap(){
+        return std::holds_alternative<RequestGetMap>(*this);
+    }
+
+    RequestGetMap AsRequestGetMap(){
+        return std::get<RequestGetMap>(*this);
+    }
+
+    bool IsRequestGetRoute(){
+        return std::holds_alternative<RequestGetRoute>(*this);
+    }
+
+    RequestGetRoute AsRequestGetRoute(){
+        return std::get<RequestGetRoute>(*this);
+    }
 };
 
 //Responses
@@ -53,8 +122,8 @@ struct BaseResponse{
     int request_id_ = 0;
 };
 
-struct ResponceBusInfo : public BaseResponse{
-    ResponceBusInfo(int request_id, double curvature, double route_length, int stop_count, int unique_stop_count)
+struct ResponseBusInfo : public BaseResponse{
+    ResponseBusInfo(int request_id, double curvature, double route_length, int stop_count, int unique_stop_count)
     :BaseResponse(request_id), curvature_(curvature), route_length_(route_length),stop_count_(stop_count),
     unique_stop_count_(unique_stop_count){}
 
@@ -64,46 +133,84 @@ struct ResponceBusInfo : public BaseResponse{
     int unique_stop_count_ = 0;
 };
 
-struct ResponceStopInfo : public BaseResponse{
-    ResponceStopInfo(int request_id, Buses buses)
+struct ResponseStopInfo : public BaseResponse{
+    ResponseStopInfo(int request_id, Buses buses)
     :BaseResponse(request_id), buses_(buses){}
 
     Buses buses_;
 };
 
-struct ResponceError : public BaseResponse{
-    ResponceError(int request_id)
+struct ResponseError : public BaseResponse{
+    ResponseError(int request_id)
     :BaseResponse(request_id){}
     
     std::string error_message = "not found";
 };
 
-class MultiResponse : private std::variant<ResponceBusInfo, ResponceStopInfo, ResponceError>{
+struct ResponseMap : BaseResponse{
+    ResponseMap(int request_id, std::string map)
+    : BaseResponse(request_id), map_(std::move(map)){}
+
+    std::string map_;
+};
+
+using BaseEdgePtr = typename std::shared_ptr<transport_router::TransportRouter<double>::BaseEdge>;
+using WaitEdgePtr = typename transport_router::TransportRouter<double>::WaitEdge*;
+using BusEdgePtr = typename transport_router::TransportRouter<double>::BusEdge*;
+
+
+struct ResponseRoute : BaseResponse{
+    ResponseRoute(int request_id, double total_time, std::vector<BaseEdgePtr> items)
+    : BaseResponse(request_id), total_time_(total_time), items_(std::move(items)){
+
+    }
+
+    double total_time_ = 0;
+    std::vector<BaseEdgePtr> items_;
+};
+
+class MultiResponse : private std::variant<ResponseBusInfo, ResponseStopInfo, ResponseError, ResponseMap, ResponseRoute>{
 public:
     using variant::variant;
 
-    bool IsResponceBusInfo(){
-        return std::holds_alternative<ResponceBusInfo>(*this);
+    bool IsResponseBusInfo(){
+        return std::holds_alternative<ResponseBusInfo>(*this);
     }
 
-    ResponceBusInfo AsResponceBusInfo(){
-        return std::get<ResponceBusInfo>(*this);
+    ResponseBusInfo AsResponseBusInfo(){
+        return std::get<ResponseBusInfo>(*this);
     }
 
-    bool IsResponceStopInfo(){
-        return std::holds_alternative<ResponceStopInfo>(*this);
+    bool IsResponseStopInfo(){
+        return std::holds_alternative<ResponseStopInfo>(*this);
     }
 
-    ResponceStopInfo AsResponceStopInfo(){
-        return std::get<ResponceStopInfo>(*this);
+    ResponseStopInfo AsResponseStopInfo(){
+        return std::get<ResponseStopInfo>(*this);
     }
 
-    bool IsResponceError(){
-        return std::holds_alternative<ResponceError>(*this);
+    bool IsResponseError(){
+        return std::holds_alternative<ResponseError>(*this);
     }
 
-    ResponceError AsResponceError(){
-        return std::get<ResponceError>(*this);
+    ResponseError AsResponseError(){
+        return std::get<ResponseError>(*this);
+    }
+
+    bool IsResponseMap(){
+        return std::holds_alternative<ResponseMap>(*this);
+    }
+
+    ResponseMap AsResponseMap(){
+        return std::get<ResponseMap>(*this);
+    }
+
+    bool IsResponceRoute(){
+        return std::holds_alternative<ResponseRoute>(*this);
+    }
+
+    ResponseRoute AsResponseRoute(){
+        return std::get<ResponseRoute>(*this);
     }
 };
 
@@ -111,55 +218,25 @@ public:
 
 class RequestHandler{
 public:
-    void AddStopRequest(detail::RequestStop&& request);
-    void AddBusRequest(detail::RequestBus&& request);
-    void AddStatRequest(detail::RequestInfo&& request);
+    void AddBaseRequest(detail::MultiBaseRequest&& request);
+    void AddStatRequest(detail::MultiStatRequest&& request);
+    void AddRenderSettings(map_render::RenderSettings&& settings);
+    void AddRoutingSettings(transport_router::RoutingSettings&& settings);
 
     void ApplyRequests(TransportCatalogue& catalogue);
     std::vector<detail::MultiResponse>& GetResponses();
 private:
-    std::vector<detail::RequestStop> stop_requests_;
-    std::vector<detail::RequestBus> bus_requests_;
-    std::vector<detail::RequestInfo> stat_requests_;
+    void ApplyStopRequests(TransportCatalogue& catalogue);
+    void ApplyBusRequests(TransportCatalogue& catalogue);
+    void ApplyStatRequests(TransportCatalogue& catalogue);
+
+    std::map<std::string, std::vector<detail::MultiBaseRequest>> base_requests_;
+    std::vector<detail::MultiStatRequest> stat_requests_;
     std::vector<detail::MultiResponse> responses_;
+    map_render::MapRender map_render_;
+    transport_router::TransportRouter<double> router_;
 };
 
 } // namespace request_handler
 
 } // namespace transport_catalogue
-
-/*
- * Здесь можно было бы разместить код обработчика запросов к базе, содержащего логику, которую не
- * хотелось бы помещать ни в transport_catalogue, ни в json reader.
- *
- * В качестве источника для идей предлагаем взглянуть на нашу версию обработчика запросов.
- * Вы можете реализовать обработку запросов способом, который удобнее вам.
- *
- * Если вы затрудняетесь выбрать, что можно было бы поместить в этот файл,
- * можете оставить его пустым.
- */
-
-// Класс RequestHandler играет роль Фасада, упрощающего взаимодействие JSON reader-а
-// с другими подсистемами приложения.
-// См. паттерн проектирования Фасад: https://ru.wikipedia.org/wiki/Фасад_(шаблон_проектирования)
-/*
-class RequestHandler {
-public:
-    // MapRenderer понадобится в следующей части итогового проекта
-    RequestHandler(const TransportCatalogue& db, const renderer::MapRenderer& renderer);
-
-    // Возвращает информацию о маршруте (запрос Bus)
-    std::optional<BusStat> GetBusStat(const std::string_view& bus_name) const;
-
-    // Возвращает маршруты, проходящие через
-    const std::unordered_set<BusPtr>* GetBusesByStop(const std::string_view& stop_name) const;
-
-    // Этот метод будет нужен в следующей части итогового проекта
-    svg::Document RenderMap() const;
-
-private:
-    // RequestHandler использует агрегацию объектов "Транспортный Справочник" и "Визуализатор Карты"
-    const TransportCatalogue& db_;
-    const renderer::MapRenderer& renderer_;
-};
-*/

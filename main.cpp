@@ -10,10 +10,10 @@ using namespace transport_catalogue;
 using namespace transport_catalogue::json_reader;
 
 int main() {
+    ifstream in("input.json");
+    ofstream out("output.json");
     TransportCatalogue catalogue;
-    // ifstream input("build/Debug/input.json");
-    // ofstream output("build/Debug/output.json");
-    JsonReader reader(cin, cout);
+    JsonReader reader(in);
     reader.SendRequests(catalogue);
-    reader.GetResponses();
+    reader.GetResponses(out);
 }

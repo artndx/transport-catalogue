@@ -1,7 +1,6 @@
 ﻿#include "json.h"
 
 #include <iterator>
-#include <sstream>
 
 namespace json {
 

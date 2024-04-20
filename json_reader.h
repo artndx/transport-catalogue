@@ -4,6 +4,7 @@
 
 #include "transport_catalogue.h"
 #include "json.h"
+#include "json_builder.h"
 #include "request_handler.h"
 
 namespace transport_catalogue{
@@ -14,13 +15,12 @@ json::Document LoadJSON(const std::string& s);
 
 std::string Print(const json::Node& node);
 
-using request_handler::detail::RequestStop;
-using request_handler::detail::RequestBus;
+using request_handler::detail::RequestAddStop;
+using request_handler::detail::RequestAddBus;
 
 class JsonReader{
 public:
-    JsonReader(std::istream& input, std::ostream& output)
-    : input_(input),output_(output){
+    JsonReader(std::istream& input){
         std::ostringstream sstream;
         sstream << input.rdbuf();
         AddConvertedRequests(sstream);
@@ -28,19 +28,17 @@ public:
     // Обработчик запросов
     // отправляет запросы в каталог
     void SendRequests(TransportCatalogue& catalogue);
-    void GetResponses();
+    void GetResponses(std::ostream& output);
 private:
-    // Формурует запрос в виде
-    // структуры для обработчика
-    RequestStop ConvertRequestStop(const  json::Dict& properties);
-    RequestBus ConvertRequestBus(const  json::Dict& properties);
+    void ConvertBaseRequests(const json::Array& base_requests);
+    void ConvertStatRequests(const json::Array& stat_requests);
+    void ConvertRenderSettings(const json::Dict& render_settings);
+    void ConvertRoutingSettings(const json::Dict& render_settings);
 
     // Обрабаывает JSON-данные и передает 
     // запросы в виде структур данных
     // обработчику запросов
     void AddConvertedRequests(std::ostringstream& sstream);
-    std::istream& input_; 
-    std::ostream& output_;
     request_handler::RequestHandler request_handler_;
 };
 
